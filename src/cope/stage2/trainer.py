@@ -159,10 +159,10 @@ def create_stage2_model(
     base_model_name = config["base_model"]
     stage1_checkpoint = config["stage1_checkpoint"]
     tokenizer_path = config.get(
-        "tokenizer_path", "checkpoints/00_raw_assets/tokenizer_stage2"
+        "tokenizer_path", "checkpoints/02_stage2/tokenizer_stage2"
     )
     stage2_embeddings_path = config.get(
-        "stage2_embeddings_path", "checkpoints/00_raw_assets/stage2_initialized"
+        "stage2_embeddings_path", "checkpoints/02_stage2/stage2_initialized"
     )
 
     # Load extended tokenizer (with Stage 2 tokens)

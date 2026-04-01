@@ -5,8 +5,8 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
 BASE_MODEL="${BASE_MODEL:-/AI/HF_MODELS/Qwen2.5-7B}"
-REGISTRY="${REGISTRY:-data/registry/tool_registry.json}"
-TOKENIZER_OUT="${TOKENIZER_OUT:-checkpoints/tokenizer_expanded}"
+REGISTRY="${REGISTRY:-data/00_global/tool_registry.json}"
+TOKENIZER_OUT="${TOKENIZER_OUT:-checkpoints/01_stage1/tokenizer_expanded}"
 
 if [[ ! -f "$REGISTRY" ]]; then
   echo "Error: registry not found: $REGISTRY"

@@ -4,10 +4,10 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
-SYSTEM_CONFIG="${SYSTEM_CONFIG:-data/raw/system.json}"
-TRAIN_DATA="${TRAIN_DATA:-data/processed/train.jsonl}"
-TOOL_REGISTRY="${TOOL_REGISTRY:-data/registry/tool_registry.json}"
-TOKENIZER_DIR="${TOKENIZER_DIR:-checkpoints/tokenizer_expanded}"
+SYSTEM_CONFIG="${SYSTEM_CONFIG:-data/00_global/system.json}"
+TRAIN_DATA="${TRAIN_DATA:-data/01_stage1/train.jsonl}"
+TOOL_REGISTRY="${TOOL_REGISTRY:-data/00_global/tool_registry.json}"
+TOKENIZER_DIR="${TOKENIZER_DIR:-checkpoints/01_stage1/tokenizer_expanded}"
 
 echo "Checking Stage1 required inputs..."
 

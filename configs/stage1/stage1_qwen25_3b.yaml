@@ -6,10 +6,10 @@ model:
 
 base_model: /AI/HF_MODELS/Qwen2.5-3B
 initialized_model: /AI/HF_MODELS/Qwen2.5-3B
-tokenizer: checkpoints/tokenizer_expanded
-train_data: data/processed/train.jsonl
-tool_registry: data/registry/tool_registry.json
-system_config_path: data/raw/system.json
+tokenizer: checkpoints/01_stage1/tokenizer_expanded
+train_data: data/01_stage1/train.jsonl
+tool_registry: data/00_global/tool_registry.json
+system_config_path: data/00_global/system.json
 max_length: 256
 num_epochs: 3
 batch_size: 4
@@ -35,7 +35,7 @@ bf16: true
 logging_steps: 10
 save_steps: 500
 save_total_limit: 3
-output_dir: outputs/stage1_qwen25_3b
+output_dir: checkpoints/01_stage1/train_runs/stage1_qwen25_3b
 optim: adamw_torch
 adam_beta1: 0.9
 adam_beta2: 0.999

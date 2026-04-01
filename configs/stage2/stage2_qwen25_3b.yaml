@@ -5,11 +5,11 @@ model:
   base_model: /AI/HF_MODELS/Qwen2.5-3B
 
 base_model: /AI/HF_MODELS/Qwen2.5-3B
-stage1_checkpoint: checkpoints/01_stage1_memorization/latest
-tokenizer_path: checkpoints/00_raw_assets/tokenizer_stage2
-stage2_embeddings_path: checkpoints/00_raw_assets/stage2_initialized
-train_data: data/02_stage2_planning/train.json
-val_data: data/02_stage2_planning/val.json
+stage1_checkpoint: checkpoints/01_stage1/memorization/latest
+tokenizer_path: checkpoints/02_stage2/tokenizer_stage2
+stage2_embeddings_path: checkpoints/02_stage2/stage2_initialized
+train_data: data/02_stage2/train.json
+val_data: data/02_stage2/val.json
 val_split: 0.1
 max_length: 1024
 num_epochs: 3
@@ -30,7 +30,7 @@ optimizer: adamw_torch
 bf16: true
 fp16: false
 gradient_checkpointing: false
-output_dir: outputs/stage2_qwen25_3b
+output_dir: checkpoints/02_stage2/train_runs/stage2_qwen25_3b
 save_strategy: steps
 save_steps: 200
 eval_steps: 200

@@ -5,12 +5,12 @@ model:
   base_model: /AI/HF_MODELS/Qwen2.5-3B
 
 base_model: /AI/HF_MODELS/Qwen2.5-3B
-lora_path: checkpoints/02_stage2_planning/latest/final_model/lora_weights
-tokenizer: checkpoints/02_stage2_planning/latest/final_model
-tool_registry: data/registry/tool_registry.json
-rl_data: data/03_stage3_rl/rl-execution_plans.json
-profiling_path: data/raw/profiling.csv
-profiling_fallback_path: data/raw/profiling-small.csv
+lora_path: checkpoints/02_stage2/latest/final_model/lora_weights
+tokenizer: checkpoints/02_stage2/latest/final_model
+tool_registry: data/00_global/tool_registry.json
+rl_data: data/03_stage3/rl-execution_plans.json
+profiling_path: data/00_global/profiling.csv
+profiling_fallback_path: data/00_global/profiling-small.csv
 rollouts_per_input: 2
 batch_size: 1
 bf16: false
@@ -18,7 +18,7 @@ fp16: true
 enforce_structure_constraints_for_logprobs: true
 max_new_tokens: 128
 kl_coef: 0.02
-output_dir: outputs/stage3_qwen25_3b_hgrpo
+output_dir: checkpoints/03_stage3/train_runs/stage3_qwen25_3b_hgrpo
 trl_version: latest
 complexity_curriculum: [low, medium, high]
 skip_empty_complexity: false

@@ -15,8 +15,8 @@ Usage:
     python -m src.utils.collapse_output \
         --checkpoint checkpoints/test/final_model \
         --config configs/stage1_tool_learning.yaml \
-        --registry data/registry/tool_registry.json \
-        --output checkpoints/01_stage1_memorization/20260209_tool_learing_supernetwork
+        --registry data/00_global/tool_registry.json \
+        --output checkpoints/01_stage1/memorization/20260209_tool_learing_supernetwork
 """
 
 import os

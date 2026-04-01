@@ -224,8 +224,8 @@ def test_dataset():
     from transformers import AutoTokenizer
 
     # Load extended tokenizer (assume it exists)
-    tokenizer_path = "checkpoints/00_raw_assets/tokenizer_stage2"
-    data_path = "data/02_stage2_planning/gt-single.json"
+    tokenizer_path = "checkpoints/02_stage2/tokenizer_stage2"
+    data_path = "data/02_stage2/gt-single.json"
 
     print("Testing Stage2PlanningDataset...")
     print(f"Tokenizer: {tokenizer_path}")
