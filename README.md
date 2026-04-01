@@ -24,6 +24,14 @@ bash scripts/stage1/prepare_stage1_assets.sh
 # BASE_MODEL=/AI/HF_MODELS/Qwen2.5-3B REGISTRY=data/registry/tool_registry.json TOKENIZER_OUT=checkpoints/tokenizer_expanded bash scripts/stage1/prepare_stage1_assets.sh
 ```
 
+Stage1 data migration from legacy repository (`ref` symlink by default):
+
+```bash
+bash scripts/stage1/migrate_data_from_legacy.sh
+# optional:
+# LEGACY_ROOT=/path/to/TOMAS-LLM bash scripts/stage1/migrate_data_from_legacy.sh
+```
+
 Offline inference:
 
 ```bash
