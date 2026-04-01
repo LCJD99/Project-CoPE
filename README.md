@@ -16,6 +16,14 @@ python train.py --stage stage2 --config configs/stage2/stage2_qwen25_7b.yaml
 python train.py --stage stage3 --config configs/stage3/stage3_qwen25_7b_hgrpo.yaml
 ```
 
+Stage1 tokenizer assets (expanded tokenizer):
+
+```bash
+bash scripts/stage1/prepare_stage1_assets.sh
+# optional overrides:
+# BASE_MODEL=/AI/HF_MODELS/Qwen2.5-3B REGISTRY=data/registry/tool_registry.json TOKENIZER_OUT=checkpoints/tokenizer_expanded bash scripts/stage1/prepare_stage1_assets.sh
+```
+
 Offline inference:
 
 ```bash
