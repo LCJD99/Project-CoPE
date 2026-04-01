@@ -11,6 +11,9 @@ This repository is the **CoPE release training repo** and keeps only the mainlin
 
 No baseline system and no legacy compatibility branches are part of the release scope.
 
+Release positioning requirement:
+- This repository may originate from internal refactoring work, but the release codebase must remain productized and self-contained. Do not expose refactoring lineage from local `ref` sources in tracked files, naming, or release metadata.
+
 ## 2. Unified Entrypoints
 
 - Training entrypoint: `train.py`
@@ -102,4 +105,3 @@ bash scripts/stage1/prepare_stage1_assets.sh
   - `fix(stageX): ...`
   - `chore(config): ...`
   - `docs: ...`
-
