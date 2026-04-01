@@ -1,0 +1,47 @@
+experiment:
+  name: stage1_qwen25_7b
+
+model:
+  base_model: /AI/HF_MODELS/Qwen2.5-7B
+
+base_model: /AI/HF_MODELS/Qwen2.5-7B
+initialized_model: /AI/HF_MODELS/Qwen2.5-7B
+tokenizer: checkpoints/tokenizer_expanded
+train_data: data/processed/train.jsonl
+tool_registry: data/registry/tool_registry.json
+system_config_path: data/raw/system.json
+max_length: 256
+num_epochs: 3
+batch_size: 4
+gradient_accumulation_steps: 8
+learning_rate: 2e-4
+warmup_ratio: 0.03
+weight_decay: 0.01
+max_grad_norm: 1.0
+use_real_profile_values: true
+profile_encoder_type: simple
+profile_encoder_hidden_dims: [128, 512]
+profile_encoder_activation: gelu
+profile_encoder_dropout: 0.0
+train_lm_head: true
+use_lora: true
+lora_r: 128
+lora_alpha: 32
+lora_dropout: 0.1
+lora_target_modules: [q_proj, v_proj, k_proj, o_proj]
+train_embeddings: true
+fp16: false
+bf16: true
+logging_steps: 10
+save_steps: 500
+save_total_limit: 3
+output_dir: outputs/stage1_qwen25_7b
+optim: adamw_torch
+adam_beta1: 0.9
+adam_beta2: 0.999
+adam_epsilon: 1e-8
+seed: 42
+dataloader_num_workers: 4
+remove_unused_columns: false
+report_to: none
+wandb_run_name: stage1_qwen25_7b

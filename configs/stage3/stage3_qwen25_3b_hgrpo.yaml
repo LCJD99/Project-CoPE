@@ -1,0 +1,37 @@
+experiment:
+  name: stage3_qwen25_3b_hgrpo
+
+model:
+  base_model: /AI/HF_MODELS/Qwen2.5-3B
+
+base_model: /AI/HF_MODELS/Qwen2.5-3B
+lora_path: checkpoints/02_stage2_planning/latest/final_model/lora_weights
+tokenizer: checkpoints/02_stage2_planning/latest/final_model
+tool_registry: data/registry/tool_registry.json
+rl_data: data/03_stage3_rl/rl-execution_plans.json
+profiling_path: data/raw/profiling.csv
+profiling_fallback_path: data/raw/profiling-small.csv
+rollouts_per_input: 2
+batch_size: 1
+bf16: false
+fp16: true
+enforce_structure_constraints_for_logprobs: true
+max_new_tokens: 128
+kl_coef: 0.02
+output_dir: outputs/stage3_qwen25_3b_hgrpo
+trl_version: latest
+complexity_curriculum: [low, medium, high]
+skip_empty_complexity: false
+use_curriculum: false
+training_mode: hierarchical_grpo
+decision_types: [tool_choice, wait_control]
+max_decisions_per_plan: 4
+max_counterfactual_per_decision: 4
+micro_advantage_min_group_size: 2
+micro_advantage_eps: 1.0e-6
+macro_weight: 0.4
+micro_weight: 0.6
+sft_anchor_coef: 0.05
+report_to: none
+wandb_project: cope_stage3
+wandb_run_name: stage3_qwen25_3b_hgrpo

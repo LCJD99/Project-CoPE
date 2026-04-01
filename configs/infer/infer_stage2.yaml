@@ -1,0 +1,7 @@
+checkpoint_path: checkpoints/02_stage2_planning/latest/final_model
+base_model: /AI/HF_MODELS/Qwen2.5-7B
+stage1_checkpoint: checkpoints/01_stage1_memorization/latest
+device: cuda
+max_new_tokens: 256
+generation_config:
+  do_sample: false

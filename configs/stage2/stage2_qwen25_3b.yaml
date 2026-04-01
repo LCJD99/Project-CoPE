@@ -1,0 +1,44 @@
+experiment:
+  name: stage2_qwen25_3b
+
+model:
+  base_model: /AI/HF_MODELS/Qwen2.5-3B
+
+base_model: /AI/HF_MODELS/Qwen2.5-3B
+stage1_checkpoint: checkpoints/01_stage1_memorization/latest
+tokenizer_path: checkpoints/00_raw_assets/tokenizer_stage2
+stage2_embeddings_path: checkpoints/00_raw_assets/stage2_initialized
+train_data: data/02_stage2_planning/train.json
+val_data: data/02_stage2_planning/val.json
+val_split: 0.1
+max_length: 1024
+num_epochs: 3
+batch_size: 1
+eval_batch_size: 1
+gradient_accumulation_steps: 16
+learning_rate: 5.0e-5
+weight_decay: 0.01
+warmup_steps: 100
+lora_r: 128
+lora_alpha: 256
+lora_dropout: 0.1
+lora_target_modules: [q_proj, k_proj, v_proj, o_proj]
+num_stage2_tokens: 36
+stage1_start_idx: 151665
+stage2_start_idx: 153366
+optimizer: adamw_torch
+bf16: true
+fp16: false
+gradient_checkpointing: false
+output_dir: outputs/stage2_qwen25_3b
+save_strategy: steps
+save_steps: 200
+eval_steps: 200
+logging_steps: 10
+save_total_limit: 3
+use_wandb: false
+wandb_project: cope_stage2
+wandb_run_name: stage2_qwen25_3b
+seed: 42
+device: cuda
+num_workers: 0
