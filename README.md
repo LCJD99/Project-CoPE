@@ -24,6 +24,19 @@ bash scripts/stage1/prepare_stage1_assets.sh
 # BASE_MODEL=/AI/HF_MODELS/Qwen2.5-3B REGISTRY=data/registry/tool_registry.json TOKENIZER_OUT=checkpoints/tokenizer_expanded bash scripts/stage1/prepare_stage1_assets.sh
 ```
 
+Stage1 required input paths (release contract):
+
+- `data/raw/system.json` -> `system_config_path`
+- `data/processed/train.jsonl` -> `train_data`
+- `data/registry/tool_registry.json` -> `tool_registry`
+- `checkpoints/tokenizer_expanded` -> `tokenizer`
+
+Validate these paths before training:
+
+```bash
+bash scripts/stage1/check_stage1_inputs.sh
+```
+
 Offline inference:
 
 ```bash
