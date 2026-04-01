@@ -218,8 +218,9 @@ class ToolPlannerModel(nn.Module):
             
             # Compute cross entropy loss
             loss_fct = nn.CrossEntropyLoss()
+            vocab_dim = shift_logits.size(-1)
             loss = loss_fct(
-                shift_logits.view(-1, self.expanded_vocab_size),
+                shift_logits.view(-1, vocab_dim),
                 shift_labels.view(-1)
             )
         

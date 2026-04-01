@@ -178,14 +178,17 @@ def setup_model_with_virtual_tokens(
     new_tokens = [f"<{token_name}>" for token_name in token_list]
     
     # Check if need to add new tokens
-    first_new_token = '<IMG_CLS_SMALL_LOW_LOW_LOW_LOW>'
-    if first_new_token not in tokenizer.get_vocab():
+    if new_tokens and new_tokens[0] not in tokenizer.get_vocab():
         print(f"Adding {len(new_tokens)} new tokens to tokenizer...")
         num_added = tokenizer.add_tokens(new_tokens)
         print(f"Added {num_added} tokens")
-    
-    new_token_start_idx = tokenizer.convert_tokens_to_ids(first_new_token)
-    num_virtual_tokens = len(new_tokens)
+
+    token_ids = tokenizer.convert_tokens_to_ids(new_tokens)
+    if any(token_id is None or token_id < 0 for token_id in token_ids):
+        raise ValueError("Some virtual tokens are missing from tokenizer after setup.")
+
+    new_token_start_idx = min(token_ids)
+    num_virtual_tokens = len(token_ids)
     print(f"New token start index: {new_token_start_idx}")
     print(f"Number of virtual tokens: {num_virtual_tokens}")
     
