@@ -1,5 +1,5 @@
 experiment:
-  name: stage3_qwen25_3b_hgrpo
+  name: stage3_qwen25_3b_lag_grpo
 
 model:
   base_model: /AI/HF_MODELS/Qwen2.5-3B
@@ -18,12 +18,12 @@ fp16: true
 enforce_structure_constraints_for_logprobs: true
 max_new_tokens: 128
 kl_coef: 0.02
-output_dir: checkpoints/03_stage3/train_runs/stage3_qwen25_3b_hgrpo
+output_dir: checkpoints/03_stage3/train_runs/stage3_qwen25_3b_lag_grpo
 trl_version: latest
 complexity_curriculum: [low, medium, high]
 skip_empty_complexity: false
 use_curriculum: false
-training_mode: hierarchical_grpo
+training_mode: lag-grpo
 decision_types: [tool_choice, wait_control]
 max_decisions_per_plan: 4
 max_counterfactual_per_decision: 4
@@ -34,4 +34,4 @@ micro_weight: 0.6
 sft_anchor_coef: 0.05
 report_to: none
 wandb_project: cope_stage3
-wandb_run_name: stage3_qwen25_3b_hgrpo
+wandb_run_name: stage3_qwen25_3b_lag_grpo

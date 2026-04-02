@@ -4,7 +4,7 @@ This repository contains the CoPE training mainline only:
 
 - Stage 1: Configured Tool Token Alignment (V3 only)
 - Stage 2: Structured Program Fine-Tuning
-- Stage 3: Local-advantage-guided Policy Optimization (hierarchical GRPO only)
+- Stage 3: Local-advantage-guided Policy Optimization (lag-grpo only)
 
 ## Entrypoints
 
@@ -13,7 +13,7 @@ Training (compatible interface):
 ```bash
 python train.py --stage stage1 --config configs/stage1/stage1_qwen25_7b.yaml
 python train.py --stage stage2 --config configs/stage2/stage2_qwen25_7b.yaml
-python train.py --stage stage3 --config configs/stage3/stage3_qwen25_7b_hgrpo.yaml
+python train.py --stage stage3 --config configs/stage3/stage3_qwen25_7b_lag_grpo.yaml
 ```
 
 Stage1 tokenizer assets (expanded tokenizer):

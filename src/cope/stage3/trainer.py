@@ -302,12 +302,14 @@ def _compact_hierarchical_breakdown(details: List[Dict[str, object]]) -> str:
 
 
 def _resolve_training_mode(config: Dict[str, object]) -> str:
-    raw_mode = str(config.get("training_mode", "hierarchical_grpo")).strip().lower()
-    if raw_mode != "hierarchical_grpo":
+    raw_mode = str(config.get("training_mode", "lag-grpo")).strip().lower()
+    if raw_mode == "hierarchical_grpo":
+        return "lag-grpo"
+    if raw_mode != "lag-grpo":
         raise ValueError(
-            "Main branch only supports training_mode='hierarchical_grpo'."
+            "Main branch only supports training_mode='lag-grpo'."
         )
-    return "hierarchical_grpo"
+    return "lag-grpo"
 
 
 def build_hierarchical_rewards(
@@ -591,7 +593,7 @@ def compute_rewards_by_training_mode(
     profiling_fallback_path: Optional[str] = None,
 ) -> Tuple[List[float], List[Dict[str, object]]]:
     training_mode = _resolve_training_mode(config)
-    if training_mode == "hierarchical_grpo":
+    if training_mode == "lag-grpo":
         return build_hierarchical_rewards(
             prompts=prompts,
             completions=completions,
@@ -960,7 +962,7 @@ def train_grpo_trl(config_path: str) -> None:
             baseline_latencies = [item.get("baseline_latency_ms") for item in looked_up]
 
         training_mode = _resolve_training_mode(config)
-        if training_mode == "hierarchical_grpo":
+        if training_mode == "lag-grpo":
             reward_values, hierarchical_details = build_hierarchical_rewards(
                 prompts=prompts,
                 completions=decoded_completions,
