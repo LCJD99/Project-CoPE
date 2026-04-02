@@ -12,9 +12,9 @@ The collapsed output includes:
 - Token mappings and metadata
 
 Usage:
-    python -m src.utils.collapse_output \
+    python -m src.cope.stage1.collapse \
         --checkpoint checkpoints/test/final_model \
-        --config configs/stage1_tool_learning.yaml \
+        --config configs/stage1/stage1_qwen25_7b.yaml \
         --registry data/00_global/tool_registry.json \
         --output checkpoints/01_stage1/memorization/20260209_tool_learing_supernetwork
 """

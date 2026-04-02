@@ -16,7 +16,7 @@ fi
 
 mkdir -p "$TOKENIZER_OUT"
 
-python scripts/stage1/expand_tokenizer.py \
+PYTHONPATH=. python scripts/stage1/expand_tokenizer.py \
   --base_model "$BASE_MODEL" \
   --registry "$REGISTRY" \
   --output "$TOKENIZER_OUT" \
