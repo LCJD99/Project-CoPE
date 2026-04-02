@@ -1,5 +1,7 @@
 # CoPE: Co-designing Tool Planning and Execution
 
+![CoPE Overview](assets/overview.png)
+
 This repository is the open-source codebase of **CoPE**, a unified framework for resource-aware tool planning and execution on edge systems.
 
 Following the paper, CoPE is built around three ideas:
@@ -8,7 +10,6 @@ Following the paper, CoPE is built around three ideas:
 - **Execution-augmented tool planning language**: planning is represented as executable programs with control primitives, instead of static tool lists.
 - **Planning-execution joint training**: the model is optimized in three stages to handle dynamic resource constraints and large decision spaces.
 
-![CoPE Overview](assets/overview.png)
 
 ## Overview
 
