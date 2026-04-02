@@ -10,7 +10,7 @@ Following the paper, CoPE is built around three ideas:
 
 ![CoPE Overview](assets/overview.png)
 
-## Paper-Aligned Overview
+## Overview
 
 Given a user request, current system resource state, and candidate tool library, CoPE first tokenizes tools into configured instances, then generates executable planning programs, and finally refines policy quality with execution feedback.
 
