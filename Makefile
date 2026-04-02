@@ -1,6 +1,7 @@
-.PHONY: stage1 stage1-tokenizer stage1-check stage1-train stage1-collapse
+.PHONY: stage1 stage1-tokenizer stage1-check stage1-train stage1-collapse stage2 stage2-train
 
 STAGE1_CONFIG ?= configs/stage1/stage1_qwen25_7b.yaml
+STAGE2_CONFIG ?= configs/stage2/stage2_qwen25_7b.yaml
 CUDA_VISIBLE_DEVICES ?= 3
 CUDA_HOME ?= /usr/local/cuda-12.8
 
@@ -20,3 +21,8 @@ stage1-train:
 
 stage1-collapse:
 	CUDA_VISIBLE_DEVICES=$(CUDA_VISIBLE_DEVICES) STAGE1_CONFIG=$(STAGE1_CONFIG) bash scripts/stage1/collapse_stage1_output.sh
+
+stage2: stage2-train
+
+stage2-train:
+	CUDA_HOME=$(CUDA_HOME) CUDA_VISIBLE_DEVICES=$(CUDA_VISIBLE_DEVICES) TOKENIZERS_PARALLELISM=false python train.py --stage stage2 --config $(STAGE2_CONFIG)
