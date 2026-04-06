@@ -4,25 +4,31 @@ Stage 2 Model with Three-Layer Embedding Architecture
 This module implements the Stage 2 planning model with a three-layer design:
 - Layer 1: Base LLM embeddings (frozen, 0-151664)
 - Layer 2: Stage 1 collapsed tool embeddings (frozen, 151665-153365)
-- Layer 3: Stage 2 control token embeddings (trainable, 153366-153401)
+- Layer 3: Stage 2 control token embeddings (trainable, 153366-153403)
 
 The model loads Stage 1 collapsed embeddings as fixed tensors and only trains
 the new Stage 2 control tokens along with LoRA adapters.
 """
 
 from contextlib import nullcontext
+import os
 from pathlib import Path
 import re
 from typing import Optional, Dict, Any, List, Set
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers.modeling_outputs import CausalLMOutput
 from transformers import PreTrainedModel, PreTrainedTokenizer
 
+from src.cope.stage2.tokens import TOKEN_INIT_MAP
+
 
 _REF_TOKEN_RE = re.compile(r"<REF_(\d+)>")
-_LHS_REF_RE = re.compile(r"^\s*<REF_(\d+)>\s*=")
+_LHS_REF_RE = re.compile(
+    r"^\s*(?:<STATEMENT>\s*)?<REF_(\d+)>\s*(?:(?:<EQ>)|=)"
+)
 _TOOL_TOKEN_RE = re.compile(r"<([A-Z0-9_]+)>")
 
 
@@ -30,17 +36,74 @@ def _get_stage2_trainable_dtype(_base_dtype: torch.dtype) -> torch.dtype:
     return torch.float32
 
 
-def _enforce_first_token_ref0(
+def _semantic_init_stage2_tensors(
+    llm: PreTrainedModel,
+    tokenizer: PreTrainedTokenizer,
+    num_stage2_tokens: int,
+    hidden_size: int,
+    device: str,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    input_embeddings = llm.get_input_embeddings()
+    output_embeddings = llm.get_output_embeddings()
+
+    stage2_embeddings = torch.zeros(
+        num_stage2_tokens,
+        hidden_size,
+        dtype=input_embeddings.weight.dtype,
+        device=device,
+    )
+    stage2_lm_head = torch.zeros(
+        num_stage2_tokens,
+        hidden_size,
+        dtype=(
+            output_embeddings.weight.dtype
+            if output_embeddings is not None
+            else input_embeddings.weight.dtype
+        ),
+        device=device,
+    )
+
+    token_list = list(TOKEN_INIT_MAP.keys())
+    with torch.no_grad():
+        for idx, token_str in enumerate(token_list):
+            if idx >= num_stage2_tokens:
+                break
+            semantic_word_embs = []
+            for word in TOKEN_INIT_MAP[token_str]:
+                token_ids = tokenizer(
+                    word,
+                    add_special_tokens=False,
+                    return_tensors="pt",
+                )["input_ids"].to(device)
+                word_emb = input_embeddings(token_ids).mean(dim=1).squeeze(0)
+                semantic_word_embs.append(word_emb)
+
+            semantic_emb = torch.stack(semantic_word_embs).mean(dim=0)
+            stage2_embeddings[idx] = semantic_emb
+            stage2_lm_head[idx] = semantic_emb
+
+    return stage2_embeddings, stage2_lm_head
+
+
+def _enforce_first_token_structure(
     next_token_logits: torch.Tensor,
     step_idx: int,
+    statement_token_id: Optional[int],
     ref0_token_id: Optional[int],
 ) -> None:
-    if step_idx != 0 or ref0_token_id is None:
+    if step_idx != 0:
         return
-    if ref0_token_id < 0 or ref0_token_id >= next_token_logits.shape[-1]:
+
+    preferred_token_id = statement_token_id
+    if preferred_token_id is None:
+        preferred_token_id = ref0_token_id
+    if preferred_token_id is None:
         return
+    if preferred_token_id < 0 or preferred_token_id >= next_token_logits.shape[-1]:
+        return
+
     mask = torch.ones_like(next_token_logits, dtype=torch.bool)
-    mask[:, ref0_token_id] = False
+    mask[:, preferred_token_id] = False
     next_token_logits.masked_fill_(mask, float("-inf"))
 
 
@@ -49,7 +112,7 @@ def infer_plan_constraint_state(plan_suffix: str) -> Dict[str, Any]:
     Infer coarse FSM state from current generated plan suffix.
 
     Returns a dict with:
-      - kind: one of start_stmt/wait_refs/sync_refs/finish_refs/expect_tool/in_args/none
+      - kind: one of start_stmt/stmt_lhs_ref/stmt_eq/stmt_wait_or_exec/wait_refs/finish_refs/expect_tool/in_args/stmt_end/none
       - defined_refs: set[int] refs defined by completed exec statements
       - finish_has_ref: whether current finish line already has >=1 ref token
       - wait_has_ref: whether current wait segment already has >=1 ref token
@@ -72,9 +135,6 @@ def infer_plan_constraint_state(plan_suffix: str) -> Dict[str, Any]:
     if line == "":
         return {"kind": "start_stmt", "defined_refs": defined_refs}
 
-    if line.startswith("<SYNC>"):
-        return {"kind": "sync_refs", "defined_refs": defined_refs}
-
     if line.startswith("<FINISH>"):
         finish_refs = _REF_TOKEN_RE.findall(line)
         return {
@@ -82,6 +142,27 @@ def infer_plan_constraint_state(plan_suffix: str) -> Dict[str, Any]:
             "defined_refs": defined_refs,
             "finish_has_ref": len(finish_refs) > 0,
         }
+
+    statement_prefix = "<STATEMENT>"
+    if line.startswith(statement_prefix):
+        statement_body = line[len(statement_prefix) :].strip()
+        if statement_body == "":
+            return {"kind": "stmt_lhs_ref", "defined_refs": defined_refs}
+
+        if "<EQ>" not in statement_body and "=" not in statement_body:
+            if _REF_TOKEN_RE.search(statement_body):
+                return {"kind": "stmt_eq", "defined_refs": defined_refs}
+            return {"kind": "stmt_lhs_ref", "defined_refs": defined_refs}
+
+        if "<EQ>" in statement_body:
+            statement_rhs = statement_body.split("<EQ>", 1)[1].strip()
+        else:
+            statement_rhs = statement_body.split("=", 1)[1].strip()
+
+        if statement_rhs == "":
+            return {"kind": "stmt_wait_or_exec", "defined_refs": defined_refs}
+
+        line = statement_rhs
 
     if "<WAIT>" in line and "<EXEC>" not in line:
         wait_tail = line.split("<WAIT>", 1)[1]
@@ -127,6 +208,8 @@ def infer_plan_constraint_state(plan_suffix: str) -> Dict[str, Any]:
                     break
         if in_quote or paren_balance > 0:
             return {"kind": "in_args", "defined_refs": defined_refs}
+        if "<END_STATEMENT>" not in line and plan_suffix.strip().endswith(")"):
+            return {"kind": "stmt_end", "defined_refs": defined_refs}
 
     return {"kind": "none", "defined_refs": defined_refs}
 
@@ -149,7 +232,7 @@ class Stage2EmbeddingLayer(nn.Module):
         Args:
             base_embeddings: Base LLM embeddings (frozen)
             stage1_collapsed_embeddings: Stage 1 collapsed embeddings [1701, hidden_size] (frozen)
-            stage2_embeddings: Stage 2 trainable embeddings [36, hidden_size]
+            stage2_embeddings: Stage 2 trainable embeddings [38, hidden_size]
             stage1_start_idx: Starting index of Stage 1 tokens (default: 151665)
             stage2_start_idx: Starting index of Stage 2 tokens (default: 153366)
         """
@@ -259,14 +342,14 @@ class Stage2LMHead(nn.Module):
         stage2_lm_head: nn.Embedding,
         base_vocab_size: int = 151665,
         stage1_vocab_size: int = 1701,
-        stage2_vocab_size: int = 36,
+        stage2_vocab_size: int = 38,
         base_lm_head_size: Optional[int] = None,
     ):
         """
         Args:
             base_lm_head: Base LLM head (frozen)
             stage1_collapsed_lm_head: Stage 1 collapsed head [1701, hidden_size] (frozen)
-            stage2_lm_head: Stage 2 trainable head [36, hidden_size]
+            stage2_lm_head: Stage 2 trainable head [38, hidden_size]
             base_vocab_size: Size of base vocabulary (to use from base_lm_head)
             stage1_vocab_size: Number of Stage 1 tool tokens
             stage2_vocab_size: Number of Stage 2 control tokens
@@ -384,22 +467,8 @@ class Stage2PlannerModel(nn.Module):
         self.hidden_size = llm.config.hidden_size
         self.num_refs = 32
 
-        # CRITICAL: Use tokenizer's actual vocab size, not calculated from parts
-        # The tokenizer is the source of truth for token IDs in labels
+        # CRITICAL: tokenizer size is the source of truth for label token ids.
         self.total_vocab_size = len(tokenizer)
-
-        # Calculate component sizes based on tokenizer structure
-        # Tokenizer = base_vocab + stage1_added + stage2_added
-        self.stage1_vocab_size = 1701  # Stage 1 tool tokens
-        self.stage2_vocab_size = 36  # Stage 2 control tokens
-        # Base vocab = total - stage1 - stage2
-        self.base_vocab_size = (
-            self.total_vocab_size - self.stage1_vocab_size - self.stage2_vocab_size
-        )
-
-        # Token range boundaries (where Stage 1 and Stage 2 tokens start in the vocabulary)
-        self.stage1_start_idx = 151665
-        self.stage2_start_idx = 153366
 
         # Load Stage 1 collapsed embeddings (frozen)
         stage1_emb_path = Path(stage1_collapsed_checkpoint) / "collapsed_embeddings.bin"
@@ -408,27 +477,90 @@ class Stage2PlannerModel(nn.Module):
         stage1_collapsed_emb = torch.load(stage1_emb_path, map_location=device)
         stage1_collapsed_head = torch.load(stage1_head_path, map_location=device)
 
+        # Infer Stage1 size from checkpoint assets instead of hardcoded values.
+        self.stage1_vocab_size = int(stage1_collapsed_emb.shape[0])
+        if int(stage1_collapsed_head.shape[0]) != self.stage1_vocab_size:
+            raise ValueError(
+                "Stage1 collapsed embedding/head size mismatch: "
+                f"emb={stage1_collapsed_emb.shape[0]}, head={stage1_collapsed_head.shape[0]}"
+            )
+
+        # Infer Stage2 band from mandatory Stage2 control/reference tokens.
+        stage2_anchor_tokens = [
+            "<EXEC>",
+            "<FINISH>",
+            "<WAIT>",
+            "<EQ>",
+            "<STATEMENT>",
+            "<END_STATEMENT>",
+        ] + [f"<REF_{i}>" for i in range(self.num_refs)]
+        stage2_token_ids: List[int] = []
+        for token in stage2_anchor_tokens:
+            token_id = int(self.tokenizer.convert_tokens_to_ids(token))
+            if 0 <= token_id < self.total_vocab_size:
+                stage2_token_ids.append(token_id)
+        if not stage2_token_ids:
+            raise ValueError("Failed to locate Stage2 control/reference tokens in tokenizer.")
+
+        self.stage2_start_idx = min(stage2_token_ids)
+        self.stage2_vocab_size = max(stage2_token_ids) - self.stage2_start_idx + 1
+        self.stage1_start_idx = self.stage2_start_idx - self.stage1_vocab_size
+        if self.stage1_start_idx < 0:
+            raise ValueError(
+                f"Invalid inferred stage1_start_idx={self.stage1_start_idx}, "
+                f"stage2_start_idx={self.stage2_start_idx}, stage1_vocab_size={self.stage1_vocab_size}"
+            )
+        self.base_vocab_size = self.stage1_start_idx
+
+        expected_total = (
+            self.base_vocab_size + self.stage1_vocab_size + self.stage2_vocab_size
+        )
+        if expected_total != self.total_vocab_size:
+            print(
+                "WARNING: inferred vocab partition mismatch, using contiguous fallback. "
+                f"inferred_total={expected_total}, tokenizer_total={self.total_vocab_size}"
+            )
+            self.base_vocab_size = (
+                self.total_vocab_size - self.stage1_vocab_size - self.stage2_vocab_size
+            )
+            self.stage1_start_idx = self.base_vocab_size
+            self.stage2_start_idx = self.base_vocab_size + self.stage1_vocab_size
+
         # Convert to match base LLM dtype (critical for dtype consistency)
         stage1_collapsed_emb = stage1_collapsed_emb.to(dtype=llm.dtype)
         stage1_collapsed_head = stage1_collapsed_head.to(dtype=llm.dtype)
 
         # Load Stage 2 initialized embeddings (trainable)
+        stage2_emb_tensor = None
+        stage2_head_tensor = None
+        force_runtime_init = os.getenv("COPE_STAGE2_FORCE_RUNTIME_INIT", "0") == "1"
         stage2_path = Path(stage2_embeddings_path)
-        if (stage2_path / "stage2_embeddings.bin").exists():
+        if not force_runtime_init and (stage2_path / "stage2_embeddings.bin").exists():
             stage2_emb_path = stage2_path / "stage2_embeddings.bin"
             stage2_head_path = stage2_path / "stage2_lm_head.bin"
-        elif (stage2_path / "stage2_embeddings_init.bin").exists():
+            stage2_emb_tensor = torch.load(stage2_emb_path, map_location=device)
+            stage2_head_tensor = torch.load(stage2_head_path, map_location=device)
+        elif (
+            not force_runtime_init
+            and (stage2_path / "stage2_embeddings_init.bin").exists()
+        ):
             # Use initialized embeddings
             stage2_emb_path = stage2_path / "stage2_embeddings_init.bin"
             stage2_head_path = stage2_path / "stage2_lm_head_init.bin"
-        else:
-            raise FileNotFoundError(
-                f"Stage 2 embeddings not found in {stage2_embeddings_path}. "
-                "Expected either stage2_embeddings.bin or stage2_embeddings_init.bin"
+            stage2_emb_tensor = torch.load(stage2_emb_path, map_location=device)
+            stage2_head_tensor = torch.load(stage2_head_path, map_location=device)
+        if stage2_emb_tensor is None or stage2_head_tensor is None:
+            print(
+                "Stage2 embedding init files not found, performing in-memory semantic "
+                "initialization for this training run."
             )
-
-        stage2_emb_tensor = torch.load(stage2_emb_path, map_location=device)
-        stage2_head_tensor = torch.load(stage2_head_path, map_location=device)
+            stage2_emb_tensor, stage2_head_tensor = _semantic_init_stage2_tensors(
+                llm=llm,
+                tokenizer=tokenizer,
+                num_stage2_tokens=self.stage2_vocab_size,
+                hidden_size=self.hidden_size,
+                device=device,
+            )
 
         trainable_dtype = _get_stage2_trainable_dtype(llm.dtype)
         stage2_emb_tensor = stage2_emb_tensor.to(dtype=trainable_dtype)
@@ -500,15 +632,28 @@ class Stage2PlannerModel(nn.Module):
         )
         self._init_decode_constraint_cache()
         self._apply_structure_constraints_for_logprobs = False
+        self._restrict_decode_to_new_and_tools = True
 
     def set_logprob_structure_constraints(self, enabled: bool) -> None:
         self._apply_structure_constraints_for_logprobs = bool(enabled)
+
+    def set_decode_vocab_restriction(self, enabled: bool) -> None:
+        """
+        Control decode-time vocab restriction.
+        When enabled, generation only allows:
+        - Stage1 tool/new tokens
+        - Stage2 control/new tokens
+        - BOS/EOS (if defined in tokenizer)
+        """
+        self._restrict_decode_to_new_and_tools = bool(enabled)
 
     def _init_decode_constraint_cache(self) -> None:
         self.exec_token_id = self._token_id_or_none("<EXEC>")
         self.finish_token_id = self._token_id_or_none("<FINISH>")
         self.wait_token_id = self._token_id_or_none("<WAIT>")
-        self.sync_token_id = self._token_id_or_none("<SYNC>")
+        self.eq_token_id = self._token_id_or_none("<EQ>")
+        self.statement_token_id = self._token_id_or_none("<STATEMENT>")
+        self.end_statement_token_id = self._token_id_or_none("<END_STATEMENT>")
 
         self.ref_token_ids: Dict[int, int] = {}
         for i in range(self.num_refs):
@@ -523,7 +668,9 @@ class Stage2PlannerModel(nn.Module):
                 self.exec_token_id,
                 self.finish_token_id,
                 self.wait_token_id,
-                self.sync_token_id,
+                self.eq_token_id,
+                self.statement_token_id,
+                self.end_statement_token_id,
             ]
             if tid is not None
         }
@@ -534,6 +681,20 @@ class Stage2PlannerModel(nn.Module):
                 continue
             if "(" in token_text:
                 self.open_paren_token_ids.add(int(token_id))
+
+        # Decode whitelist: only Stage1/Stage2 new tokens, plus BOS/EOS.
+        stage1_ids = set(range(self.stage1_start_idx, self.stage2_start_idx))
+        stage2_ids = set(
+            range(self.stage2_start_idx, self.stage2_start_idx + self.stage2_vocab_size)
+        )
+        decode_allowed_ids = set(stage1_ids) | set(stage2_ids)
+        if self.tokenizer.bos_token_id is not None:
+            decode_allowed_ids.add(int(self.tokenizer.bos_token_id))
+        if self.tokenizer.eos_token_id is not None:
+            decode_allowed_ids.add(int(self.tokenizer.eos_token_id))
+        self.decode_allowed_token_ids = {
+            tid for tid in decode_allowed_ids if 0 <= tid < self.total_vocab_size
+        }
 
     def _token_id_or_none(self, token: str) -> Optional[int]:
         token_id = self.tokenizer.convert_tokens_to_ids(token)
@@ -550,97 +711,202 @@ class Stage2PlannerModel(nn.Module):
             return text.split("[PLAN_START]", 1)[1]
         return text
 
+    def _extract_generated_control_ids(self, generated_row: torch.Tensor) -> List[int]:
+        """
+        Extract generated suffix token ids (after prompt) by taking the trailing
+        contiguous span restricted to decode-allowed ids.
+        """
+        ids = [int(x) for x in generated_row.tolist()]
+        if not ids:
+            return []
+        start = len(ids)
+        for idx in range(len(ids) - 1, -1, -1):
+            if ids[idx] in self.decode_allowed_token_ids:
+                start = idx
+                continue
+            break
+        return ids[start:]
+
+    def _compute_ebnf_allowed_next_ids(
+        self,
+        generated_row: torch.Tensor,
+        eos_token_ids: Set[int],
+    ) -> Set[int]:
+        """
+        State-machine constrained next-token set based on docs/EBNF.md:
+
+          Program   ::= ExecStmt* <FINISH> ResultList
+          ExecStmt  ::= <STATEMENT> Ref <EQ> PreCondition? MetaExec <END_STATEMENT>
+          PreCond   ::= <WAIT> RefList
+          MetaExec  ::= <EXEC> Tool
+          RefList   ::= Ref+
+          ResultList::= Ref+
+        """
+        seq = self._extract_generated_control_ids(generated_row)
+        ref_ids = set(self.ref_token_ids.values())
+        defined_ref_ids: Set[int] = set()
+        stage1_tool_ids = set(range(self.stage1_start_idx, self.stage2_start_idx))
+
+        phase = "PROGRAM"
+        current_lhs_ref: Optional[int] = None
+        wait_ref_count = 0
+
+        for token_id in seq:
+            # Program phase: zero or more statements, then FINISH.
+            if phase == "PROGRAM":
+                if (
+                    self.statement_token_id is not None
+                    and token_id == self.statement_token_id
+                ):
+                    phase = "STMT_LHS"
+                    continue
+                if (
+                    self.finish_token_id is not None
+                    and token_id == self.finish_token_id
+                ):
+                    phase = "FINISH_REFS"
+                    continue
+                return set(eos_token_ids)
+
+            if phase == "STMT_LHS":
+                if token_id in ref_ids:
+                    current_lhs_ref = token_id
+                    phase = "STMT_EQ"
+                    continue
+                return set(eos_token_ids)
+
+            if phase == "STMT_EQ":
+                if self.eq_token_id is not None and token_id == self.eq_token_id:
+                    phase = "STMT_AFTER_EQ"
+                    continue
+                return set(eos_token_ids)
+
+            if phase == "STMT_AFTER_EQ":
+                if self.wait_token_id is not None and token_id == self.wait_token_id:
+                    wait_ref_count = 0
+                    phase = "STMT_WAIT_REFS"
+                    continue
+                if self.exec_token_id is not None and token_id == self.exec_token_id:
+                    phase = "STMT_TOOL"
+                    continue
+                return set(eos_token_ids)
+
+            if phase == "STMT_WAIT_REFS":
+                if token_id in defined_ref_ids:
+                    wait_ref_count += 1
+                    continue
+                if (
+                    self.exec_token_id is not None
+                    and token_id == self.exec_token_id
+                    and wait_ref_count > 0
+                ):
+                    phase = "STMT_TOOL"
+                    continue
+                return set(eos_token_ids)
+
+            if phase == "STMT_TOOL":
+                if token_id in stage1_tool_ids:
+                    if current_lhs_ref is not None:
+                        defined_ref_ids.add(current_lhs_ref)
+                    phase = "STMT_END"
+                    continue
+                return set(eos_token_ids)
+
+            if phase == "STMT_END":
+                if (
+                    self.end_statement_token_id is not None
+                    and token_id == self.end_statement_token_id
+                ):
+                    phase = "PROGRAM"
+                    continue
+                return set(eos_token_ids)
+
+            if phase == "FINISH_REFS":
+                if token_id in defined_ref_ids:
+                    phase = "FINISH_REFS_NONEMPTY"
+                    continue
+                return set(eos_token_ids)
+
+            if phase == "FINISH_REFS_NONEMPTY":
+                if token_id in defined_ref_ids:
+                    continue
+                if token_id in eos_token_ids:
+                    phase = "DONE"
+                    continue
+                return set(eos_token_ids)
+
+            if phase == "DONE":
+                if token_id in eos_token_ids:
+                    continue
+                return set(eos_token_ids)
+
+        # Decide allowed next ids from current phase.
+        if phase == "PROGRAM":
+            allowed: Set[int] = set()
+            if self.statement_token_id is not None:
+                allowed.add(self.statement_token_id)
+            if self.finish_token_id is not None:
+                allowed.add(self.finish_token_id)
+            return allowed
+
+        if phase == "STMT_LHS":
+            return set(ref_ids)
+
+        if phase == "STMT_EQ":
+            return {self.eq_token_id} if self.eq_token_id is not None else set()
+
+        if phase == "STMT_AFTER_EQ":
+            allowed = set()
+            if self.wait_token_id is not None:
+                allowed.add(self.wait_token_id)
+            if self.exec_token_id is not None:
+                allowed.add(self.exec_token_id)
+            return allowed
+
+        if phase == "STMT_WAIT_REFS":
+            allowed = set(defined_ref_ids)
+            if wait_ref_count > 0 and self.exec_token_id is not None:
+                allowed.add(self.exec_token_id)
+            return allowed
+
+        if phase == "STMT_TOOL":
+            return set(stage1_tool_ids)
+
+        if phase == "STMT_END":
+            return (
+                {self.end_statement_token_id}
+                if self.end_statement_token_id is not None
+                else set()
+            )
+
+        if phase == "FINISH_REFS":
+            return set(defined_ref_ids)
+
+        if phase == "FINISH_REFS_NONEMPTY":
+            return set(defined_ref_ids) | set(eos_token_ids)
+
+        if phase == "DONE":
+            return set(eos_token_ids)
+
+        return set(eos_token_ids)
+
     def _apply_constraint_mask_for_row(
         self,
         row_logits: torch.Tensor,
         generated_row: torch.Tensor,
         eos_token_ids: Set[int],
     ) -> None:
-        plan_suffix = self._plan_suffix_from_generated_ids(generated_row)
-        if plan_suffix is None:
+        allowed_ids = self._compute_ebnf_allowed_next_ids(generated_row, eos_token_ids)
+        if not allowed_ids:
             return
-        state = infer_plan_constraint_state(plan_suffix)
-        kind = state["kind"]
-        defined_refs = state["defined_refs"]
-
-        def _mask_all_except(allowed_ids: Set[int]) -> None:
-            if not allowed_ids:
-                return
-            valid_allowed = [
-                idx for idx in allowed_ids if 0 <= idx < row_logits.shape[-1]
-            ]
-            if not valid_allowed:
-                return
-            mask = torch.ones_like(row_logits, dtype=torch.bool)
-            mask[valid_allowed] = False
-            masked = row_logits.masked_fill(mask, float("-inf"))
-            if torch.isfinite(masked).any():
-                row_logits.copy_(masked)
-
-        def _mask_ids(mask_ids: Set[int]) -> None:
-            valid_ids = [idx for idx in mask_ids if 0 <= idx < row_logits.shape[-1]]
-            if not valid_ids:
-                return
-            row_logits[valid_ids] = float("-inf")
-
-        defined_ref_ids = {
-            self.ref_token_ids[idx]
-            for idx in sorted(defined_refs)
-            if idx in self.ref_token_ids
-        }
-        undefined_ref_ids = {
-            token_id
-            for idx, token_id in self.ref_token_ids.items()
-            if idx not in defined_refs
-        }
-
-        if kind == "start_stmt":
-            allowed = set(undefined_ref_ids)
-            if self.sync_token_id is not None:
-                allowed.add(self.sync_token_id)
-            if self.finish_token_id is not None:
-                allowed.add(self.finish_token_id)
-            _mask_all_except(allowed)
+        valid_allowed = [idx for idx in allowed_ids if 0 <= idx < row_logits.shape[-1]]
+        if not valid_allowed:
             return
-
-        if kind == "wait_refs":
-            used_wait_refs = {
-                self.ref_token_ids[idx]
-                for idx in state.get("wait_used_refs", set())
-                if idx in self.ref_token_ids
-            }
-            allowed = set(defined_ref_ids) - used_wait_refs
-            if state.get("wait_has_ref") and self.exec_token_id is not None:
-                allowed.add(self.exec_token_id)
-            _mask_all_except(allowed)
-            return
-
-        if kind in {"sync_refs", "finish_refs"}:
-            allowed = set(defined_ref_ids)
-            if kind == "finish_refs" and state.get("finish_has_ref"):
-                allowed |= set(eos_token_ids)
-            _mask_all_except(allowed)
-            return
-
-        if kind == "expect_tool":
-            allowed = set(range(self.stage1_start_idx, self.stage2_start_idx))
-            _mask_all_except(allowed)
-            return
-
-        if kind == "expect_lparen":
-            if self.open_paren_token_ids:
-                _mask_all_except(set(self.open_paren_token_ids))
-            else:
-                # Fallback: at least prevent repeated tool-token emissions.
-                _mask_ids(set(range(self.stage1_start_idx, self.stage2_start_idx)))
-            return
-
-        if kind == "in_args":
-            # Keep string generation flexible in arguments:
-            # only block structure-only control tokens and undefined refs.
-            blocked = set(self.control_token_ids) | set(undefined_ref_ids)
-            _mask_ids(blocked)
-            return
+        mask = torch.ones_like(row_logits, dtype=torch.bool)
+        mask[valid_allowed] = False
+        masked = row_logits.masked_fill(mask, float("-inf"))
+        if torch.isfinite(masked).any():
+            row_logits.copy_(masked)
 
     def _apply_constraint_mask_to_sequence_logits(
         self,
@@ -677,6 +943,19 @@ class Stage2PlannerModel(nn.Module):
                     logits[row_idx, pos].copy_(original_row_logits)
                 if not torch.isfinite(logits[row_idx, pos, target_token_id]):
                     logits[row_idx, pos, target_token_id] = target_logit
+
+    def _apply_decode_vocab_mask(self, row_logits: torch.Tensor) -> None:
+        """Restrict decode vocab to Stage1/Stage2 additions (+ BOS/EOS)."""
+        allowed_ids = [
+            idx for idx in self.decode_allowed_token_ids if 0 <= idx < row_logits.shape[-1]
+        ]
+        if not allowed_ids:
+            return
+        mask = torch.ones_like(row_logits, dtype=torch.bool)
+        mask[allowed_ids] = False
+        masked = row_logits.masked_fill(mask, float("-inf"))
+        if torch.isfinite(masked).any():
+            row_logits.copy_(masked)
 
     def __getattr__(self, name):
         """
@@ -756,24 +1035,41 @@ class Stage2PlannerModel(nn.Module):
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
 
-            # Validate label range
+            # Validate label range against actual logits vocab size.
+            logits_vocab_size = shift_logits.shape[-1]
             valid_mask = shift_labels != -100
             if valid_mask.any():
                 valid_labels = shift_labels[valid_mask]
                 max_label = valid_labels.max().item()
-                if max_label >= self.total_vocab_size:
+                if max_label >= logits_vocab_size:
                     # Clamp invalid labels to prevent crash
                     shift_labels = torch.clamp(
-                        shift_labels, min=-100, max=self.total_vocab_size - 1
+                        shift_labels, min=-100, max=logits_vocab_size - 1
                     )
 
-            # Flatten the tokens and compute cross entropy loss
-            # Cast logits to float32 for numerical stability in loss computation
-            loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(
-                shift_logits.float().view(-1, self.total_vocab_size),
-                shift_labels.view(-1),
-            )
+            # Flatten tokens and compute CE in chunks to reduce peak memory.
+            flat_logits = shift_logits.view(-1, logits_vocab_size)
+            flat_labels = shift_labels.view(-1)
+            flat_valid_mask = flat_labels != -100
+
+            if not flat_valid_mask.any():
+                # Preserve graph while yielding zero loss for empty-valid batches.
+                loss = flat_logits.sum() * 0.0
+            else:
+                valid_logits = flat_logits[flat_valid_mask]
+                valid_labels = flat_labels[flat_valid_mask]
+                chunk_size = 4096
+                loss_sum = valid_logits.new_zeros(())
+                valid_count = int(valid_labels.numel())
+
+                for start in range(0, valid_count, chunk_size):
+                    end = min(start + chunk_size, valid_count)
+                    loss_sum = loss_sum + F.cross_entropy(
+                        valid_logits[start:end],
+                        valid_labels[start:end],
+                        reduction="sum",
+                    )
+                loss = loss_sum / max(valid_count, 1)
 
         return CausalLMOutput(loss=loss, logits=logits)
 
@@ -862,9 +1158,16 @@ class Stage2PlannerModel(nn.Module):
             next_token_logits = logits[:, -1, :]
             greedy_next_token = next_token_logits.argmax(dim=-1, keepdim=True)
 
-            _enforce_first_token_ref0(
+            if self._restrict_decode_to_new_and_tools:
+                for row_idx in range(generated.shape[0]):
+                    if finished[row_idx]:
+                        continue
+                    self._apply_decode_vocab_mask(next_token_logits[row_idx])
+
+            _enforce_first_token_structure(
                 next_token_logits=next_token_logits,
                 step_idx=step_idx,
+                statement_token_id=self.statement_token_id,
                 ref0_token_id=self.ref0_token_id,
             )
 

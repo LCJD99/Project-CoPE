@@ -4,7 +4,7 @@ Stage 2 Trainer: Multi-Step Planning with Three-Layer Embedding Architecture
 This trainer implements Stage 2 planning model training with:
 - Frozen base LLM embeddings (0-151664)
 - Frozen Stage 1 tool embeddings (151665-153365)
-- Trainable Stage 2 control token embeddings (153366-153401)
+- Trainable Stage 2 control token embeddings (153366-153403)
 - Continued LoRA training from Stage 1
 """
 
@@ -16,10 +16,12 @@ from typing import Dict, Optional
 from datetime import datetime
 
 import torch
+import numpy as np
 from torch.utils.data import DataLoader, random_split
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
+    EvalPrediction,
     TrainingArguments,
     Trainer,
     TrainerCallback,
@@ -159,7 +161,7 @@ def create_stage2_model(
     base_model_name = config["base_model"]
     stage1_checkpoint = config["stage1_checkpoint"]
     tokenizer_path = config.get(
-        "tokenizer_path", "checkpoints/02_stage2/tokenizer_stage2"
+        "tokenizer_path", "checkpoints/02_stage2/new_tokenizer"
     )
     stage2_embeddings_path = config.get(
         "stage2_embeddings_path", "checkpoints/02_stage2/stage2_initialized"
@@ -171,7 +173,7 @@ def create_stage2_model(
     print(f"Tokenizer vocabulary size: {len(tokenizer)}")
 
     # Verify vocabulary size
-    expected_vocab_size = 153402
+    expected_vocab_size = 153404
     if len(tokenizer) != expected_vocab_size:
         print(
             f"Warning: Expected vocabulary size {expected_vocab_size}, got {len(tokenizer)}"
@@ -266,6 +268,48 @@ def create_datasets(
     return train_dataset, val_dataset
 
 
+def preprocess_logits_for_metrics(logits, labels):
+    """
+    Reduce eval memory pressure by converting logits to token ids before
+    gathering predictions across batches.
+    """
+    if isinstance(logits, tuple):
+        logits = logits[0]
+    return torch.argmax(logits, dim=-1)
+
+
+def compute_stage2_metrics(eval_pred: EvalPrediction) -> Dict[str, float]:
+    """
+    Compute token-level accuracy on valid target tokens only.
+
+    Notes:
+    - Stage2 labels use -100 for context/padding (ignored positions)
+    - Causal LM predicts token t at position t-1, so we shift by one step
+    """
+    predictions = eval_pred.predictions
+    labels = eval_pred.label_ids
+
+    if isinstance(predictions, tuple):
+        predictions = predictions[0]
+
+    # Ensure ndarray for vectorized metric computation
+    predictions = np.asarray(predictions)
+    labels = np.asarray(labels)
+
+    # Shift for causal LM next-token prediction
+    pred_tokens = predictions[:, :-1]
+    target_tokens = labels[:, 1:]
+    valid_mask = target_tokens != -100
+
+    valid_count = int(valid_mask.sum())
+    if valid_count == 0:
+        return {"token_accuracy": 0.0}
+
+    correct_count = int(((pred_tokens == target_tokens) & valid_mask).sum())
+    token_accuracy = correct_count / valid_count
+    return {"token_accuracy": float(token_accuracy)}
+
+
 def train_stage2(config_path: str):
     """
     Main training function for Stage 2 planning.
@@ -315,6 +359,7 @@ def train_stage2(config_path: str):
 
     # Create datasets
     train_dataset, val_dataset = create_datasets(config, tokenizer)
+    eval_steps = 200
 
     # Training arguments
     training_args = TrainingArguments(
@@ -328,11 +373,9 @@ def train_stage2(config_path: str):
         warmup_steps=config.get("warmup_steps", 100),
         logging_steps=config.get("logging_steps", 10),
         save_steps=config.get("save_steps", 200),
-        eval_steps=config.get("eval_steps", 200) if val_dataset else None,
+        eval_steps=eval_steps if val_dataset else None,
         save_strategy=config.get("save_strategy", "steps"),
-        eval_strategy="steps"
-        if val_dataset
-        else "no",  # Changed from evaluation_strategy
+        eval_strategy="steps" if val_dataset else "no",
         bf16=config.get("bf16", True),
         fp16=config.get("fp16", False),
         optim=config.get("optimizer", "adamw_torch"),
@@ -359,6 +402,9 @@ def train_stage2(config_path: str):
     print(f"  Learning rate: {training_args.learning_rate}")
     print(f"  Warmup steps: {training_args.warmup_steps}")
     print(f"  Save steps: {training_args.save_steps}")
+    if val_dataset:
+        print(f"  Eval steps: {training_args.eval_steps}")
+        print("  Eval metric: token_accuracy")
     print(f"  Mixed precision (bf16): {training_args.bf16}")
 
     # Create trainer
@@ -368,6 +414,10 @@ def train_stage2(config_path: str):
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         tokenizer=tokenizer,
+        compute_metrics=compute_stage2_metrics if val_dataset else None,
+        preprocess_logits_for_metrics=preprocess_logits_for_metrics
+        if val_dataset
+        else None,
         callbacks=[Stage2MonitorCallback(stage2_model)],
     )
 

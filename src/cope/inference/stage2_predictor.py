@@ -147,7 +147,14 @@ class Stage2Predictor:
         )
         self.model.eval()
         self.max_new_tokens = max_new_tokens
-        self.generation_config = generation_config or {"do_sample": False}
+        self.generation_config = dict(generation_config or {"do_sample": False})
+        self.restrict_decode_to_new_and_tools = bool(
+            self.generation_config.pop("restrict_decode_to_new_and_tools", True)
+        )
+        if hasattr(self.model, "set_decode_vocab_restriction"):
+            self.model.set_decode_vocab_restriction(
+                self.restrict_decode_to_new_and_tools
+            )
 
     def predict(self, user_query: str, system_state: Dict[str, int], **kwargs) -> str:
         """Generate execution plan."""

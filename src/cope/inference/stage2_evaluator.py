@@ -57,7 +57,7 @@ def extract_tokens_from_plan(plan: str) -> List[str]:
     Returns:
         List of token strings (control tokens, tool tokens, references)
     """
-    # Match special tokens: <EXEC>, <FINISH>, <WAIT>, <SYNC>, <REF_X>, <TOOL_NAME>
+    # Match special tokens: <EXEC>, <FINISH>, <WAIT>, <EQ>, <STATEMENT>, <END_STATEMENT>, <REF_X>, <TOOL_NAME>
     token_pattern = r"<[A-Z_0-9]+>"
     tokens = re.findall(token_pattern, plan)
     return tokens
