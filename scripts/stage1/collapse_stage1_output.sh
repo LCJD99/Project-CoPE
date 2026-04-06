@@ -28,6 +28,17 @@ PY
 fi
 
 if [[ -z "${REGISTRY_FILE:-}" ]]; then
+  if [[ "$CHECKPOINT_DIR" =~ checkpoints/01_stage1/([0-9]{10})/ ]]; then
+    CHECKPOINT_STAMP="${BASH_REMATCH[1]}"
+    STAMP_REGISTRY="data/01_stage1/${CHECKPOINT_STAMP}/tool_registry.json"
+    if [[ -f "$STAMP_REGISTRY" ]]; then
+      REGISTRY_FILE="$STAMP_REGISTRY"
+      echo "Auto-selected registry from checkpoint stamp: $REGISTRY_FILE"
+    fi
+  fi
+fi
+
+if [[ -z "${REGISTRY_FILE:-}" ]]; then
   REGISTRY_FILE="$(python - <<'PY' "$STAGE1_CONFIG"
 import sys
 import yaml
@@ -97,4 +108,4 @@ ln -sfn "$OUTPUT_DIR_ABS" "$LATEST_LINK"
 echo ""
 echo "Stage1 collapse completed."
 echo "Stage2 config input path should use:"
-echo "  stage1_checkpoint: checkpoints/01_stage1/memorization/latest"
+echo "  stage1_checkpoint: ${LATEST_LINK}"
